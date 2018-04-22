@@ -11,6 +11,7 @@ import com.google.gson.Gson;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import io.netty.util.AttributeKey;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -20,13 +21,21 @@ import java.util.Map;
  */
 public class ServerAction {
 
+    public static void sendAllMessageEvent(List<ChannelHandlerContext> agentChannel, Object objEvent, String eventName) {
+        for (ChannelHandlerContext ctx : agentChannel){
+             ctx.writeAndFlush(new TextWebSocketFrame(
+                new Gson().toJson(new MessPoJo<Object>(eventName, objEvent))));
+        AttributeKey<String> aKey = AttributeKey.valueOf(String.valueOf(objEvent));
+        ctx.channel().attr(aKey).setIfAbsent(String.valueOf(objEvent));
+        }
+    }
+    
     public static void sendMessageEvent(ChannelHandlerContext ctx, Object objEvent, String eventName) {
-        ctx.writeAndFlush(new TextWebSocketFrame(
+             ctx.writeAndFlush(new TextWebSocketFrame(
                 new Gson().toJson(new MessPoJo<Object>(eventName, objEvent))));
         AttributeKey<String> aKey = AttributeKey.valueOf(String.valueOf(objEvent));
         ctx.channel().attr(aKey).setIfAbsent(String.valueOf(objEvent));
     }
-
     public static ChatAgent searchAgentChat(Map<String, ChatAgent> mapAgentOnline, String customerId, String queueId, Map<String, List<String>> mapDenyAgent) {
         ChatAgent agent = null;
         if (!mapAgentOnline.isEmpty()) {

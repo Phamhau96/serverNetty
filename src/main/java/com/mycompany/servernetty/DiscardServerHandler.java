@@ -9,6 +9,7 @@ import com.chatweb.Util.Chat_Constants;
 import com.chatweb.chatgateway.controllers.ChatSessionGateway;
 import com.chatweb.model.ChatAgent;
 import com.chatweb.model.ChatCustomer;
+import com.chatweb.model.ChatMessage;
 import com.chatweb.model.ChatSession;
 import com.chatweb.model.MessageModel;
 import com.google.gson.Gson;
@@ -17,7 +18,9 @@ import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.SimpleChannelInboundHandler;
 import io.netty.handler.codec.http.websocketx.CloseWebSocketFrame;
 import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -34,7 +37,9 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
     private static Map<String, List<String>> mapDenyAgent = new HashMap<>();
     private static Map<String, ChatSession> mapSessionWait = new HashMap<>();
     private static Map<String, ChatSession> mapSessionAll = new HashMap<>();
+    private static Map<String, ChatMessage> mapMessageChat = new HashMap<>();
     private static ChatSessionGateway sessionGateway = new ChatSessionGateway();
+    private static Map<String, HashSet<ChannelHandlerContext>> mapChannel = new HashMap<>();
 
     @Override
     protected void channelRead0(ChannelHandlerContext chc, TextWebSocketFrame txtMsg) throws Exception {
@@ -48,6 +53,7 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
 
             switch (action) {
                 case Chat_Constants.LOGIN:
+                    //<editor-fold defaultstate="collapsed" desc="Login">
                     /*ktra customer co trong list chua 
                 neu chua tao ra mot phien chat moi va tim kiem Agent
                 neu co ktra thoi gian cho chat neu co thi thoi neu ko tim kiem Agent
@@ -65,6 +71,7 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                             ChatSession chatSession = new ChatSession();
                             chatSession.setCustomerId(msgOject.getId());
                             chatSession.setMsgClient(msgOject.getMsg());
+                            chatSession.setClientType(msgOject.getClientType());
                             chatSession = sessionGateway.insertSessionChat(chatSession);
 
                             mapSessionWait.put(chatSession.getSessionId(), chatSession);
@@ -87,52 +94,94 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                             chatSession.setAgentName(chatAgent.getFullName());
                             mapSessionWait.put(chatSession.getSessionId(), chatSession);
                             sessionGateway.updateSessionChat(chatSession);
-                            ServerAction.sendMessageEvent(chatAgent.getCtx(), chatSession, Chat_Constants.CHAT_REQUEST);
-                            ServerAction.sendMessageEvent(chatAgent.getCtx(), chatSession, Chat_Constants.JOIN_EVENT);
-                            ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.JOIN_EVENT);
-                            ServerAction.sendMessageEvent(chatAgent.getCtx(), chatSession, Chat_Constants.GET_MESSAGE);
-                            ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.GET_MESSAGE);
 
+                            //get list Channel
+                            List<ChannelHandlerContext> agentChannel = new ArrayList<>(mapChannel.get(chatAgent.getAgentId()));
+
+                            ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.CHAT_REQUEST);
+                            ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.JOIN_EVENT);
+                            ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.JOIN_EVENT);
+                            ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.SEND_CHAT);
+                            ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.SEND_CHAT);
+
+                            MessageModel message = new MessageModel();
+                            message.setMsg(chatSession.getMsgClient());
+
+                            if (mapMessageChat.containsKey(chatSession.getSessionId())) {
+                                mapMessageChat.get(chatSession.getSessionId()).getChatSessions().add(chatSession);
+                            } else {
+                                mapMessageChat.put(chatSession.getSessionId(), new ChatMessage());
+                                mapMessageChat.get(chatSession.getSessionId()).getChatSessions().add(chatSession);
+                            }
                         }
                     } else {
-                        ChatAgent chatAgent = new ChatAgent();
-                        chatAgent.setAgentId(msgOject.getId());
-                        chatAgent.setCtx(chc);
-                        mapAgentOnline.put(msgOject.getId(), chatAgent);
+                        if (!mapAgentOnline.containsKey(msgOject.getId())) {
+                            ChatAgent chatAgent = new ChatAgent();
+                            chatAgent.setAgentId(msgOject.getId());
+                            chatAgent.setCtx(chc);
+                            mapAgentOnline.put(msgOject.getId(), chatAgent);
+                            mapChannel.put(msgOject.getId(), new HashSet<>());
+                            mapChannel.get(msgOject.getId()).add(chc);
+                            break;
+                        }
+                        mapChannel.get(msgOject.getId()).add(chc);
                     }
-
+                    //</editor-fold>
                     break;
                 case Chat_Constants.ACCEPT_CHAT:
-                    //
+                    //<editor-fold defaultstate="collapsed" desc="Accept Chat">
                     for (String key : mapSessionWait.keySet()) {
                         if (mapSessionWait.get(key).getAgentId().equals(msgOject.getId())) {
                             mapSessionWait.remove(key);
                             break;
                         }
                     }
+                    //</editor-fold>
                     break;
                 case Chat_Constants.NO_ACCEPT_CHAT:
                     break;
                 case Chat_Constants.SEND_CHAT:
+                    //<editor-fold defaultstate="collapsed" desc="Send Message">
                     ChatSession chatSession = new ChatSession();
+                    chatSession.setSessionId(chanSesId);
                     chatSession.setCustomerId(msgOject.getId());
                     chatSession.setMsgClient(msgOject.getMsg());
+                    chatSession.setClientType(msgOject.getClientType());
+                    chatSession.setSessionId(chanSesId);
+
                     Map<String, ChatSession> mapSessionClone = sessionGateway.getmapChatSession();
                     String customerId = mapSessionClone.get(chanSesId).getCustomerId();
                     String agentId = mapSessionClone.get(chanSesId).getAgentId();
-                    ChannelHandlerContext ctx = null;
+                    chatSession.setCustomerId(customerId);
+
+                    //get list Channel Agent
+                    List<ChannelHandlerContext> agentChannel = new ArrayList<>(mapChannel.get(agentId));
+
+                    ChannelHandlerContext context = null;
                     //tim kenh cua khach hang
                     if (AGENT.equals(msgOject.getClientType())) {
-                        ctx = mapCusOnline.get(customerId).getCtx();
+                        //get list Channel
+                        context = mapCusOnline.get(customerId).getCtx();
                     } else {
-                        chatSession.setSessionId(chanSesId);
-                        chatSession.setCustomerId(customerId);
-                        ctx = mapAgentOnline.get(agentId).getCtx();
+                        context = chc;
                     }
-                    ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.GET_MESSAGE);
-                    ServerAction.sendMessageEvent(ctx, chatSession, Chat_Constants.GET_MESSAGE);
+                    ServerAction.sendMessageEvent(context, chatSession, Chat_Constants.SEND_CHAT);
+                    ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.SEND_CHAT);
+
+                    mapMessageChat.get(chanSesId).getChatSessions().add(chatSession);
+                    break;
+                //</editor-fold>
+
+                case Chat_Constants.GET_MESSAGE:
+                    //<editor-fold defaultstate="collapsed" desc="Get Message">
+                    ChatMessage chatMessage = mapMessageChat.get(chanSesId);
+                    //get list Channel
+//                    List<ChannelHandlerContext> Channel = new ArrayList<>(mapChannel.get(msgOject.getId()));
+                    ServerAction.sendMessageEvent(chc, chatMessage, Chat_Constants.GET_MESSAGE);
+                    //</editor-fold>
                     break;
                 case Chat_Constants.END_CHAT:
+                    //<editor-fold defaultstate="collapsed" desc="End Chat">
                     //ktra xem session ko neu co thi End
                     // gui yeu cau ket thuc chat
                     Map<String, ChatSession> mapSessionClone1 = sessionGateway.getmapChatSession();
@@ -145,7 +194,8 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                     } else {
                         ctx1 = mapAgentOnline.get(agentId1).getCtx();
                     }
-                    ServerAction.sendMessageEvent(ctx1, null, Chat_Constants.END_CHAT);
+//                    ServerAction.sendMessageEvent(ctx1, null, Chat_Constants.END_CHAT);
+                    //</editor-fold>
                     break;
                 case Chat_Constants.LOG_OUT:
                     mapAgentOnline.remove(msgOject.getId());

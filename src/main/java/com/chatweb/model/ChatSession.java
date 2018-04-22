@@ -19,6 +19,7 @@ public class ChatSession {
     private String queueId;
     private String status;
     private String msgClient;
+    private String clientType;
 
     public void setAgentName(String agentName) {
         this.agentName = agentName;
@@ -56,6 +57,10 @@ public class ChatSession {
         return sessionId;
     }
 
+    public void setClientType(String clientType) {
+        this.clientType = clientType;
+    }
+
     public String getAgentId() {
         return agentId;
     }
@@ -83,6 +88,9 @@ public class ChatSession {
     public String getCustomerName() {
         return customerName;
     }
-    
 
+    public String getClientType() {
+        return clientType;
+    }
+    
 }
