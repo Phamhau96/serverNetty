@@ -28,4 +28,8 @@ public class Chat_Constants {
     public static final String JOIN_EVENT = "JoinEvent";
     
     public static final String GET_MESSAGE = "GetMessage";
+    
+    public static final String GET_CONVERSATION = "GetConversation";
+    
+    public static final String GET_CONVERSATION_AGENT = "GetConversationAgent";
 }
