@@ -20,6 +20,7 @@ public class ChatSession {
     private String status;
     private String msgClient;
     private String clientType;
+    private boolean isRead;
 
     public void setAgentName(String agentName) {
         this.agentName = agentName;
@@ -91,6 +92,14 @@ public class ChatSession {
 
     public String getClientType() {
         return clientType;
+    }
+
+    public boolean isIsRead() {
+        return isRead;
+    }
+
+    public void setIsRead(boolean isRead) {
+        this.isRead = isRead;
     }
     
 }

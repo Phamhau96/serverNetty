@@ -20,16 +20,20 @@ public class Chat_Constants {
     public static final String END_CHAT = "EndChat";
 
     public static final String LOG_OUT = "LogOut";
-    
+
     public static final String CHAT_REQUEST = "ChatRequest";
-    
+
     public static final String NO_ACCEPT_CHAT = "NoAcceptChat";
-    
+
     public static final String JOIN_EVENT = "JoinEvent";
-    
+
     public static final String GET_MESSAGE = "GetMessage";
-    
+
     public static final String GET_CONVERSATION = "GetConversation";
-    
+
     public static final String GET_CONVERSATION_AGENT = "GetConversationAgent";
+
+    public static final String FIRST_CHAT = "FirstChat";
+
+    public static final String CONVERSATION_ISREAD = "ConversationIsRead";
 }
