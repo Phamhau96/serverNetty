@@ -21,8 +21,10 @@ import io.netty.handler.codec.http.websocketx.TextWebSocketFrame;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Queue;
 
 /**
  *
@@ -42,6 +44,8 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
     private static Map<String, HashSet<ChannelHandlerContext>> mapChannel = new HashMap<>();
     //theo dõi các session maf agent đang chat, Key id agent
     private static Map<String, HashSet<String>> mapAgentChatSession = new HashMap<>();
+    //Queue phân chia công việc 
+    private static Queue queue = new LinkedList();
 
     @Override
     protected void channelRead0(ChannelHandlerContext chc, TextWebSocketFrame txtMsg) throws Exception {
@@ -73,38 +77,43 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                             mapCusOnline.put(msgOject.getId(), chatCustomer);
 
                             //tao ra session chat
-//                            ChatSession chatSession = new ChatSession();
                             chatSession.setCustomerId(msgOject.getId());
                             chatSession.setMsgClient(msgOject.getMsg());
                             chatSession.setClientType(msgOject.getClientType());
+                            chatSession.setIsRead(true);
                             chatSession = sessionGateway.insertSessionChat(chatSession);
 
                             mapSessionWait.put(chatSession.getSessionId(), chatSession);
+                        } else {
+                            chatSession.setSessionId(chanSesId);
+                            chatSession.setCustomerId(msgOject.getId());
+                            chatSession.setMsgClient(msgOject.getMsg());
+                            chatSession.setClientType(msgOject.getClientType());
+                            chatSession.setIsRead(true);
                         }
 
-//                        ChatSession chatSession = new ChatSession();
-                        for (String key : mapSessionWait.keySet()) {
-                            if (mapSessionWait.get(key).getCustomerId().equals(msgOject.getId())) {
-                                chatSession = mapSessionWait.get(key);
-                                break;
-                            }
-                        }
+//                        for (String key : mapSessionWait.keySet()) {
+//                            if (mapSessionWait.get(key).getCustomerId().equals(msgOject.getId())) {
+//                                chatSession = mapSessionWait.get(key);
+//                                break;
+//                            }
+//                        }
                         //tim agent chat
-                        ChatAgent chatAgent = ServerAction.searchAgentChat(mapAgentOnline, chatSession.getCustomerId(), "", mapDenyAgent);
+                        ChatAgent chatAgent = ServerAction.searchAgentChat(mapAgentOnline, chatSession.getCustomerId(), "", mapDenyAgent, queue);
 
                         if (chatAgent != null) {
                             //gui yeu cau chat toi agent
                             chatSession.setAgentId(chatAgent.getAgentId());
                             chatSession.setAgentName(chatAgent.getFullName());
-                            mapSessionWait.put(chatSession.getSessionId(), chatSession);
+//                            mapSessionWait.put(chatSession.getSessionId(), chatSession);
                             sessionGateway.updateSessionChat(chatSession);
 
                             //get list Channel
                             List<ChannelHandlerContext> agentChannel = new ArrayList<>(mapChannel.get(chatAgent.getAgentId()));
 
                             ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.CHAT_REQUEST);
-                            ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.JOIN_EVENT);
-                            ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.JOIN_EVENT);
+                            ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.ACCEPT_CHAT);
+                            ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.ACCEPT_CHAT);
                             ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.SEND_CHAT);
                             ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.SEND_CHAT);
 
@@ -123,6 +132,21 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                                 mapAgentChatSession.put(chatAgent.getAgentId(), new HashSet<>());
                             }
                             mapAgentChatSession.get(chatAgent.getAgentId()).add(chatSession.getSessionId());
+                            mapSessionWait.remove(chanSesId);
+
+                            //insert mesage db;
+                            ServerAction.insertMessage(chatSession);
+                        } else {
+                            if (mapMessageChat.containsKey(chatSession.getSessionId())) {
+                                mapMessageChat.get(chatSession.getSessionId()).getChatSessions().add(chatSession);
+                            } else {
+                                mapMessageChat.put(chatSession.getSessionId(), new ChatMessage());
+                                mapMessageChat.get(chatSession.getSessionId()).getChatSessions().add(chatSession);
+                            }
+                            ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.JOIN_EVENT);
+
+                            //insert mesage db;
+                            ServerAction.insertMessage(chatSession);
                         }
                     } else {
                         if (!mapAgentOnline.containsKey(msgOject.getId())) {
@@ -132,10 +156,13 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                             mapAgentOnline.put(msgOject.getId(), chatAgent);
                             mapChannel.put(msgOject.getId(), new HashSet<>());
                             mapChannel.get(msgOject.getId()).add(chc);
+                            queue.add(chatAgent.getAgentId());
                             System.out.println("Kênh Agent: " + chc.channel());
-                            break;
                         }
+
                         mapChannel.get(msgOject.getId()).add(chc);
+                        // ktra xem mapsessionWait có session nào đang chờ ko nếu có thì tìm agent
+                        SearchSession();
                     }
                     //</editor-fold>
                     break;
@@ -164,6 +191,8 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                     String customerId = mapSessionClone.get(chanSesId).getCustomerId();
                     String agentId = mapSessionClone.get(chanSesId).getAgentId();
                     chatSession.setCustomerId(customerId);
+                    chatSession.setAgentId(agentId);
+                    chatSession.setAgentName(mapAgentOnline.get(agentId).getFullName());
 
                     //get list Channel Agent
                     List<ChannelHandlerContext> agentChannel = new ArrayList<>(mapChannel.get(agentId));
@@ -173,13 +202,18 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                     if (AGENT.equals(msgOject.getClientType())) {
                         //get list Channel
                         context = mapCusOnline.get(customerId).getCtx();
+                        chatSession.setIsRead(false);
                     } else {
                         context = chc;
+                        chatSession.setIsRead(true);
                     }
                     ServerAction.sendMessageEvent(context, chatSession, Chat_Constants.SEND_CHAT);
                     ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.SEND_CHAT);
 
                     mapMessageChat.get(chanSesId).getChatSessions().add(chatSession);
+
+                    //insert mesage db;
+                    ServerAction.insertMessage(chatSession);
                     break;
                 //</editor-fold>
 
@@ -193,17 +227,32 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                     //<editor-fold defaultstate="collapsed" desc="End Chat">
                     //ktra xem session ko neu co thi End
                     // gui yeu cau ket thuc chat
+                    ChatSession chatSession2 = new ChatSession();
+                    chatSession2.setSessionId(chanSesId);
+
                     Map<String, ChatSession> mapSessionClone1 = sessionGateway.getmapChatSession();
                     String customerId1 = mapSessionClone1.get(chanSesId).getCustomerId();
                     String agentId1 = mapSessionClone1.get(chanSesId).getAgentId();
-                    ChannelHandlerContext ctx1 = null;
-                    //Tim kenh
+
+                    //get list Channel Agent
+                    List<ChannelHandlerContext> agentChannel2 = new ArrayList<>(mapChannel.get(agentId1));
+
+                    ChannelHandlerContext context1 = null;
+                    //tim kenh cua khach hang
                     if (AGENT.equals(msgOject.getClientType())) {
-                        ctx1 = mapCusOnline.get(customerId1).getCtx();
+                        //get list Channel
+                        context1 = mapCusOnline.get(customerId1).getCtx();
                     } else {
-                        ctx1 = mapAgentOnline.get(agentId1).getCtx();
+                        context1 = chc;
                     }
-//                    ServerAction.sendMessageEvent(ctx1, null, Chat_Constants.END_CHAT);
+
+                    mapMessageChat.remove(chanSesId);
+                    mapAgentChatSession.get(agentId1).remove(chanSesId);
+                    mapCusOnline.remove(customerId1);
+
+                    ServerAction.sendMessageEvent(context1, chatSession2, Chat_Constants.END_CHAT);
+                    ServerAction.sendAllMessageEvent(agentChannel2, chatSession2, Chat_Constants.END_CHAT);
+
                     //</editor-fold>
                     break;
                 case Chat_Constants.LOG_OUT:
@@ -230,6 +279,17 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
                     }
                     //</editor-fold>
                     break;
+                case Chat_Constants.FIRST_CHAT:
+                    //tao ra mot duong ket nối từ server den client
+                    ServerAction.sendMessageEvent(chc, new ChatSession(), Chat_Constants.FIRST_CHAT);
+                    break;
+                case Chat_Constants.CONVERSATION_ISREAD:
+                    try {
+                        int leght = mapMessageChat.get(chanSesId).getChatSessions().size();
+                        mapMessageChat.get(chanSesId).getChatSessions().get(leght - 1).setIsRead(false);
+                    } catch (Exception e) {
+                    }
+                    break;
             }
         } catch (JsonSyntaxException json) {
             System.err.println("JsonSyntaxException " + json.getMessage());
@@ -240,6 +300,39 @@ public class DiscardServerHandler extends SimpleChannelInboundHandler<TextWebSoc
             chc.write(new CloseWebSocketFrame());
             chc.close();
         }
-
     }
+
+    private void SearchSession() {
+        if (!mapSessionWait.isEmpty()) {
+            Map<String, ChatSession> mapSessionWaitClone = new HashMap<>(mapSessionWait);
+            for (String key : mapSessionWaitClone.keySet()) {
+                List<ChatSession> chatMessage = mapMessageChat.get(key).getChatSessions();
+                ChatSession chatSession = chatMessage.get(chatMessage.size() - 1);
+                ChannelHandlerContext chc = mapCusOnline.get(chatSession.getCustomerId()).getCtx();
+                // Tim agent
+                ChatAgent agent = ServerAction.searchAgentChat(mapAgentOnline, null, "", mapDenyAgent, queue);
+                if (agent != null) {
+                    chatSession.setAgentId(agent.getAgentId());
+                    chatSession.setAgentName(agent.getFullName());
+                    sessionGateway.updateSessionChat(chatSession);
+                    //get list Channel
+                    List<ChannelHandlerContext> agentChannel = new ArrayList<>(mapChannel.get(agent.getAgentId()));
+
+                    ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.CHAT_REQUEST);
+                    ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.JOIN_EVENT);
+                    ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.ACCEPT_CHAT);
+                    ServerAction.sendAllMessageEvent(agentChannel, chatSession, Chat_Constants.SEND_CHAT);
+                    ServerAction.sendMessageEvent(chc, chatSession, Chat_Constants.SEND_CHAT);
+
+                    //Thêm session vào map
+                    if (!mapAgentChatSession.containsKey(agent.getAgentId())) {
+                        mapAgentChatSession.put(agent.getAgentId(), new HashSet<>());
+                    }
+                    mapAgentChatSession.get(agent.getAgentId()).add(chatSession.getSessionId());
+                    mapSessionWait.remove(chatSession.getSessionId());
+                }
+            }
+        }
+    }
+
 }
